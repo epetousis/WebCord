@@ -160,13 +160,13 @@ export default async function startServer(window:Electron.BrowserWindow) {
     const trust = {
       isKnown: knownIstancesList.filter(instance => instance[1].origin === origin).length === 0,
       isDiscordService: /^https:\/\/[a-z]+\.discord\.com$/.test(origin),
-      isLocal: "http://127.0.0.1"
+      isLocal: /^https?:\/\/127.0.0.1/.test(origin)
     };
     if(!trust.isKnown && !trust.isDiscordService && !trust.isLocal) {
       console.debug("[WSS] Blocked request from origin '"+origin+"'. (not trusted)");
       return wss.close(1008,"Client is not trusted.");
     }
-    if(trust.isDiscordService || trust.isLocal) {
+    if(trust.isDiscordService) {
       console.debug("[WSS] Blocked request from origin '"+origin+"'. (not supported)");
       return wss.close(1008,"Client is not supported.");
     }
@@ -177,8 +177,32 @@ export default async function startServer(window:Electron.BrowserWindow) {
         parsedData = (data as Buffer).toString();
       if(isJsonSyntaxCorrect(parsedData as string))
         parsedData = JSON.parse(parsedData as string);
+      if ('pttAction' in (parsedData as Record<string, string>)
+        && typeof (parsedData as Record<string, string>)['pttAction'] === 'string'
+        && trust.isLocal) {
+        const pttData = parsedData as Record<string, string>;
+        // Handle push to talk actions here
+        switch (pttData['pttAction']) {
+          case 'activate':
+            console.debug('[WS] Handling PTT activation action.');
+            // Unfortunately, Discord has trouble handling F keys greater than 12.
+            // Using an accelerator with modifiers seems to also break PTT.
+            window.webContents.sendInputEvent({type: 'keyDown', keyCode: 'F12'});
+            break;
+          case 'deactivate':
+            console.debug('[WS] Handling PTT deactivation action.');
+            window.webContents.sendInputEvent({type: 'keyUp', keyCode: 'F12'});
+            break;
+          case 'toggle':
+            console.debug('[WS] Handling PTT deactivation action.');
+            window.webContents.sendInputEvent({type: 'keyUp', keyCode: 'F12'});
+            break;
+          default:
+            console.debug('Unexpected PTT action was received on WSS.');
+        }
+      }
       // Invite response handling
-      if(isResponse(parsedData, ["INVITE_BROWSER", "GUILD_TEMPLATE_BROWSER"] as ("INVITE_BROWSER"|"GUILD_TEMPLATE_BROWSER")[])) {
+      else if(isResponse(parsedData, ["INVITE_BROWSER", "GUILD_TEMPLATE_BROWSER"] as ("INVITE_BROWSER"|"GUILD_TEMPLATE_BROWSER")[])) {
         if(lock) {
           console.debug('[WSS] Blocked request "'+parsedData.cmd+'" (WSS locked).');
           return wss.close(1013,"Server is busy, try again later.");
